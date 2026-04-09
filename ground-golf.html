@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>グラウンド・ゴルフ スコア集計</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: 'Hiragino Kaku Gothic ProN','Meiryo','Yu Gothic',sans-serif; margin: 0; }
+    input[type="date"] { width: 100%; max-width: 100%; min-width: 0; -webkit-appearance: none; appearance: none; display: block; }
+    .taikan-date { min-width: 0; width: 100%; overflow: hidden; }
+    @media print {
+      body * { visibility: hidden; }
+      #ranking-print-area, #ranking-print-area * { visibility: visible; }
+      #ranking-print-area { position: fixed; top: 0; left: 0; width: 100%; padding: 24px; background: white; }
+      .no-print { display: none !important; }
+    }
+    .lg\:grid { display: grid; }
+    @media (min-width: 1024px) {
+      .lg\:grid-cols-custom { grid-template-columns: 380px 1fr; }
+      .lg\:gap-6 { gap: 1.5rem; }
+      .lg\:items-start { align-items: start; }
+      .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    /* ─── グループカラーパレット ─── */
+    const GROUP_COLORS = [
+      { border: "#ef4444", bg: "#fef2f2", badge: "#ef4444", text: "#b91c1c" },
+      { border: "#3b82f6", bg: "#eff6ff", badge: "#3b82f6", text: "#1d4ed8" },
+      { border: "#22c55e", bg: "#f0fdf4", badge: "#22c55e", text: "#15803d" },
+      { border: "#f59e0b", bg: "#fffbeb", badge: "#f59e0b", text: "#b45309" },
+      { border: "#a855f7", bg: "#faf5ff", badge: "#a855f7", text: "#7e22ce" },
+      { border: "#f97316", bg: "#fff7ed", badge: "#f97316", text: "#c2410c" },
+      { border: "#14b8a6", bg: "#f0fdfa", badge: "#14b8a6", text: "#0f766e" },
+      { border: "#ec4899", bg: "#fdf2f8", badge: "#ec4899", text: "#be185d" },
+    ];
+
+    /* ─── グループ調整ヘルパー ─── */
+    function addToGroups(groups, newPlayer) {
+      if (!groups || groups.length === 0) return groups;
+      const g = groups.map((gr) => [...gr]);
+      if (g.length === 1) {
+        g[0].push(newPlayer);
+      } else {
+        const last = g.length - 1;
+        const sl = last - 1;
+        if (g[last].length <= g[sl].length) g[last].push(newPlayer);
+        else g[sl].push(newPlayer);
+      }
+      return g;
+    }
+    function removeFromGroups(groups, playerId) {
+      if (!groups) return null;
+      let g = groups.map((gr) => gr.filter((p) => p.id !== playerId));
+      g = g.filter((gr) => gr.length > 0);
+      if (g.length === 0) return null;
+      if (g.length === 1) return g;
+      const last = g.length - 1;
+      const sl = last - 1;
+      const combined = [...g[sl], ...g[last]];
+      const half = Math.ceil(combined.length / 2);
+      g[sl] = combined.slice(0, half);
+      g[last] = combined.slice(half);
+      if (g[last].length === 0) g.pop();
+      return g;
+    }
+
+    /* ─── グラウンドゴルフ アイコン SVG ─── */
+    function GroundGolfIcon({ size = 110 }) {
+      return (
+        <svg width={size} height={size} viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <ellipse cx="100" cy="155" rx="88" ry="44" fill="#5bbf1e" />
+          <ellipse cx="95" cy="148" rx="65" ry="30" fill="#72d42e" opacity="0.55" />
+          <ellipse cx="88" cy="143" rx="38" ry="16" fill="#85e03a" opacity="0.35" />
+          <ellipse cx="96" cy="162" rx="24" ry="11" fill="none" stroke="white" strokeWidth="3" />
+          <ellipse cx="96" cy="162" rx="13" ry="6" fill="none" stroke="white" strokeWidth="2.5" />
+          <line x1="72" y1="162" x2="120" y2="162" stroke="white" strokeWidth="2.5" />
+          <line x1="96" y1="151" x2="96" y2="173" stroke="white" strokeWidth="2.5" />
+          <line x1="96" y1="162" x2="96" y2="42" stroke="#b0bec5" strokeWidth="3.5" strokeLinecap="round" />
+          <rect x="96" y="42" width="46" height="32" rx="2" fill="#daeef7" />
+          <rect x="96" y="56" width="46" height="18" fill="#a8d8ea" opacity="0.6" />
+          <text x="119" y="68" textAnchor="middle" fontSize="20" fontWeight="bold" fill="#e0527a" fontFamily="Arial,sans-serif">1</text>
+          <line x1="162" y1="68" x2="124" y2="163" stroke="#c8844a" strokeWidth="6" strokeLinecap="round" />
+          <line x1="162" y1="68" x2="150" y2="96" stroke="#e8849a" strokeWidth="8" strokeLinecap="round" />
+          <line x1="159" y1="75" x2="156" y2="83" stroke="#f5b8c4" strokeWidth="9" strokeLinecap="round" opacity="0.7" />
+          <rect x="112" y="157" width="26" height="13" rx="4" fill="#b87333" />
+          <rect x="113" y="158" width="24" height="5" rx="3" fill="#d4956a" opacity="0.7" />
+          <circle cx="65" cy="154" r="9" fill="#e74c3c" /><circle cx="62" cy="151" r="3.5" fill="#ff8a80" opacity="0.65" />
+          <circle cx="50" cy="170" r="9" fill="#9b59b6" /><circle cx="47" cy="167" r="3.5" fill="#ce93d8" opacity="0.65" />
+          <circle cx="120" cy="160" r="9" fill="#f1c40f" /><circle cx="117" cy="157" r="3.5" fill="#fff176" opacity="0.65" />
+          <circle cx="148" cy="150" r="9" fill="#3498db" /><circle cx="145" cy="147" r="3.5" fill="#90caf9" opacity="0.65" />
+          <circle cx="138" cy="170" r="9" fill="#e67e22" /><circle cx="135" cy="167" r="3.5" fill="#ffcc80" opacity="0.65" />
+        </svg>
+      );
+    }
+
+    /* ─── 学習辞書付きオートコンプリート入力 ─── */
+    function DictInput({ value, onChange, dictionary, placeholder, inputClassName, onEnter, inputRef }) {
+      const [open, setOpen] = useState(false);
+      const ref = useRef(null);
+
+      const getSuggestions = () => {
+        const v = value.trim().toLowerCase();
+        if (!v) return dictionary.slice().sort();
+        const prefix = dictionary.filter((s) => s.toLowerCase().startsWith(v) && s !== value);
+        const contains = dictionary.filter((s) => !s.toLowerCase().startsWith(v) && s.toLowerCase().includes(v) && s !== value);
+        return [...prefix, ...contains];
+      };
+
+      useEffect(() => {
+        const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+        document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
+      }, []);
+
+      const select = (s) => { onChange(s); setOpen(false); };
+      const suggestions = getSuggestions();
+
+      return (
+        <div ref={ref} className="relative w-full">
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && onEnter && !e.isComposing) {
+                e.preventDefault();
+                onEnter();
+                setOpen(false);
+              }
+              if (e.key === "Escape") setOpen(false);
+            }}
+            placeholder={placeholder}
+            className={inputClassName}
+            autoComplete="off"
+          />
+          {open && suggestions.length > 0 && (
+            <div className="absolute z-50 w-full mt-1 bg-white border-2 border-green-500 rounded-2xl shadow-2xl overflow-hidden" style={{ maxHeight: 256, overflowY: "auto" }}>
+              {suggestions.map((s, i) => (
+                <button key={i} type="button"
+                  className="w-full text-left px-5 py-4 text-2xl hover:bg-green-50 active:bg-green-100 border-b border-gray-100"
+                  style={{ borderBottom: i < suggestions.length - 1 ? "1px solid #f3f4f6" : "none" }}
+                  onMouseDown={() => select(s)}>{s}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ─── 電卓モーダル ─── */
+    const NUM_KEYS = [["7","8","9"],["4","5","6"],["1","2","3"],["C","0","⌫"]];
+
+    function Calculator({ players, startIdx, onScoreChange, onClose }) {
+      const [idx, setIdx] = useState(startIdx);
+      const [input, setInput] = useState(players[startIdx]?.score?.toString() || "");
+      const player = players[idx];
+
+      const press = (key) => {
+        if (key === "C")  { setInput(""); return; }
+        if (key === "⌫") { setInput((prev) => prev.slice(0, -1)); return; }
+        if (input.length >= 3) return;
+        setInput((prev) => prev + key);
+      };
+
+      const saveAndMove = (nextIdx) => {
+        onScoreChange(players[idx].id, input);
+        setIdx(nextIdx);
+        setInput(players[nextIdx]?.score?.toString() || "");
+      };
+
+      const confirm = () => {
+        onScoreChange(player.id, input);
+        onClose();
+      };
+
+      return (
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end"
+          style={{ backgroundColor: "rgba(0,0,0,0.55)" }}
+        >
+          <div className="bg-white rounded-t-3xl px-5 pt-4 pb-7 shadow-2xl w-full" style={{ maxWidth: 576, margin: "0 auto" }}>
+            <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-5" style={{ height: 6 }} />
+            <div className="text-center mb-4">
+              <p className="text-lg text-gray-400 mb-0">{idx + 1}人目 / 全{players.length}人</p>
+              <p className="text-4xl font-black text-green-800">{player?.name}</p>
+            </div>
+            <div
+              className="rounded-2xl px-6 py-4 mb-5 flex items-center justify-end gap-3"
+              style={{ background: "#1a2e1a" }}
+            >
+              <span
+                className="font-black text-white"
+                style={{ fontSize: 52, fontVariantNumeric: "tabular-nums", minWidth: "3ch", textAlign: "right", letterSpacing: "0.05em" }}
+              >
+                {input || "—"}
+              </span>
+              <span className="text-2xl font-bold" style={{ color: "#6aaa3a" }}>打</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              {NUM_KEYS.flat().map((key) => (
+                <button
+                  key={key}
+                  onClick={() => press(key)}
+                  className="rounded-2xl text-4xl font-bold active:opacity-70 transition-all shadow-sm"
+                  style={{
+                    height: 72,
+                    background:
+                      key === "C"  ? "#fee2e2" :
+                      key === "⌫" ? "#fff7ed" : "#f3f4f6",
+                    color:
+                      key === "C"  ? "#dc2626" :
+                      key === "⌫" ? "#ea580c" : "#111827",
+                  }}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => saveAndMove((idx + 1) % players.length)}
+                className="rounded-2xl text-2xl font-black text-white active:opacity-70 transition-all shadow-md"
+                style={{ height: 68, background: "#22c55e" }}
+              >
+                次へ →
+              </button>
+              <button
+                onClick={confirm}
+                className="rounded-2xl text-2xl font-black text-white active:opacity-70 transition-all shadow-md"
+                style={{ height: 68, background: "#f59e0b" }}
+              >
+                確定 ✓
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── グループ分けロジック ─── */
+    function buildGroups(players) {
+      const shuffled = [...players];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      const n = shuffled.length;
+      const numGroups = Math.max(1, Math.round(n / 5));
+      const base = Math.floor(n / numGroups);
+      const extra = n % numGroups;
+      const groups = [];
+      let idx = 0;
+      for (let g = 0; g < numGroups; g++) {
+        const size = base + (g < extra ? 1 : 0);
+        groups.push(shuffled.slice(idx, idx + size));
+        idx += size;
+      }
+      return groups;
+    }
+
+    /* ─── メインアプリ ─── */
+    function GroundGolfApp() {
+      const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+      const [tournamentName, setTournamentName] = useState("");
+      const [tournamentDict, setTournamentDict] = useState(["春季大会","夏季大会","秋季大会","冬季大会","クラブ選手権"]);
+
+      const [players, setPlayers] = useState([]);
+      const [newName, setNewName] = useState("");
+      const [nameDict, setNameDict] = useState([]);
+
+      const [groups, setGroups] = useState(null);
+      const groupsRef = useRef(null);
+
+      const [rankings, setRankings] = useState(null);
+      const rankingRef = useRef(null);
+      const [resetModal, setResetModal] = useState(null); // null | "select" | "confirm-all" | "confirm-score"
+      const [menuOpen, setMenuOpen] = useState(false);
+      const [savedMsg, setSavedMsg] = useState(""); // 保存・読み込み完了メッセージ
+
+      const nameInputRef = useRef(null);
+      const focusNameAfterRender = useRef(false);
+
+      useEffect(() => {
+        if (focusNameAfterRender.current) {
+          focusNameAfterRender.current = false;
+          nameInputRef.current?.focus();
+        }
+      });
+
+      const [gameStarted, setGameStarted] = useState(false);
+      const [calcOpen, setCalcOpen] = useState(false);
+      const [calcStartIdx, setCalcStartIdx] = useState(0);
+
+      const openCalc = (idx) => { setCalcStartIdx(idx); setCalcOpen(true); };
+      const handleCalcScore = (id, value) => {
+        setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, score: value } : p)));
+      };
+
+      const learnTournament = (name) => {
+        if (name && !tournamentDict.includes(name)) setTournamentDict((prev) => [name, ...prev]);
+      };
+      const learnName = (name) => {
+        if (name && !nameDict.includes(name)) setNameDict((prev) => [name, ...prev]);
+      };
+
+      const addPlayer = () => {
+        const name = newName.trim();
+        if (!name) return;
+        const newP = { id: Date.now(), name, score: "", hio: 0 };
+        setPlayers((prev) => [...prev, newP]);
+        if (groups) setGroups((prev) => addToGroups(prev, newP));
+        learnName(name);
+        setNewName("");
+        if (nameInputRef.current) nameInputRef.current.value = "";
+        focusNameAfterRender.current = true;
+      };
+
+      const removePlayer = (id) => {
+        setPlayers((prev) => prev.filter((p) => p.id !== id));
+        if (groups) setGroups((prev) => removeFromGroups(prev, id));
+      };
+
+      const updateHio = (id, delta) =>
+        setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, hio: Math.max(0, p.hio + delta) } : p)));
+
+      const doGrouping = () => {
+        if (players.length < 2) { alert("グループ分けには2名以上の選手が必要です"); return; }
+        const newGroups = buildGroups(players);
+        setGroups(newGroups);
+        setPlayers(newGroups.flat());
+        setTimeout(() => groupsRef.current?.scrollIntoView({ behavior: "smooth" }), 150);
+      };
+
+      const announce = () => {
+        const withScores = players.filter((p) => p.score !== "" && !isNaN(Number(p.score)) && Number(p.score) > 0);
+        if (withScores.length === 0) { alert("スコアを入力してから発表してください"); return; }
+        if (tournamentName.trim()) learnTournament(tournamentName.trim());
+        setRankings([...withScores].sort((a, b) => Number(a.score) - Number(b.score)));
+        setTimeout(() => rankingRef.current?.scrollIntoView({ behavior: "smooth" }), 150);
+      };
+
+      /* ── 保存 ── */
+      const downloadCSV = () => {
+        const rows = [["順位","名前","合計スコア（打）","ホールインワン"]];
+        rankings.forEach((p, i) => rows.push([i + 1, p.name, p.score, p.hio]));
+        const header = tournamentName ? `# ${tournamentName}　${date}\n` : `# ${date}\n`;
+        const csv = header + rows.map(r => r.join(",")).join("\n");
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `${tournamentName || "結果"}_${date}.csv`; a.click();
+        URL.revokeObjectURL(url);
+      };
+      const [copied, setCopied] = useState(false);
+      const copyText = () => {
+        const crownMark = ["🥇","🥈","🥉"];
+        const title = [tournamentName, date].filter(Boolean).join("　");
+        const lines = rankings.map((p, i) => {
+          const mark = crownMark[i] || `${i + 1}位`;
+          const hio = p.hio > 0 ? `　🌟HIO×${p.hio}` : "";
+          return `${mark} ${p.name}　${p.score}打${hio}`;
+        });
+        const text = (title ? title + "\n" : "") + "─────────\n" + lines.join("\n");
+        navigator.clipboard.writeText(text).then(() => {
+          setCopied(true); setTimeout(() => setCopied(false), 2500);
+        });
+      };
+
+      /* ── メンバー保存・読み込み ── */
+      const saveMembers = () => {
+        const names = players.map(p => p.name);
+        localStorage.setItem("gg_members", JSON.stringify(names));
+        setMenuOpen(false);
+        setSavedMsg("✅ メンバーを保存しました");
+        setTimeout(() => setSavedMsg(""), 2500);
+      };
+      const loadMembers = () => {
+        const saved = localStorage.getItem("gg_members");
+        if (!saved) { setSavedMsg("⚠️ 保存されたメンバーがありません"); setTimeout(() => setSavedMsg(""), 2500); setMenuOpen(false); return; }
+        const names = JSON.parse(saved);
+        const loaded = names.map(name => ({ id: Date.now() + Math.random(), name, score: "", hio: 0 }));
+        setPlayers(loaded); setGroups(null); setRankings(null); setGameStarted(false);
+        setMenuOpen(false);
+        setSavedMsg(`✅ ${names.length}名を読み込みました`);
+        setTimeout(() => setSavedMsg(""), 2500);
+      };
+
+      /* ── リセット ── */
+      const doResetAll = () => {
+        setPlayers([]); setGroups(null); setRankings(null);
+        setGameStarted(false); setNewName(""); setDate(new Date().toISOString().split("T")[0]);
+        setTournamentName(""); setResetModal(null);
+      };
+      const doResetScore = () => {
+        setPlayers((prev) => prev.map((p) => ({ ...p, score: "", hio: 0 })));
+        setRankings(null); setResetModal(null);
+      };
+
+      const inp = "border-2 border-green-400 rounded-2xl px-4 py-3 text-2xl w-full focus:outline-none bg-white box-border";
+
+      const playerGroupMap = {};
+      if (groups) {
+        groups.forEach((group, gi) => {
+          const color = GROUP_COLORS[gi % GROUP_COLORS.length];
+          const label = String.fromCharCode(65 + gi);
+          group.forEach((p) => { playerGroupMap[p.id] = { label, color }; });
+        });
+      }
+
+      return (
+        <div style={{ fontFamily: "'Hiragino Kaku Gothic ProN','Meiryo','Yu Gothic',sans-serif", minHeight: "100vh", background: "linear-gradient(to bottom, #dcfce7, #bbf7d0)", paddingBottom: 64 }}>
+
+          {calcOpen && players.length > 0 && (
+            <Calculator
+              players={players}
+              startIdx={Math.min(calcStartIdx, players.length - 1)}
+              onScoreChange={handleCalcScore}
+              onClose={() => setCalcOpen(false)}
+            />
+          )}
+
+          <div className="max-w-6xl mx-auto px-4 pt-8">
+
+            {/* ヘッダー */}
+            <div style={{ position: "relative" }} className="text-center mb-8">
+              <div className="flex justify-center mb-3">
+                <GroundGolfIcon size={90} />
+              </div>
+              <h1 style={{ fontSize: "2.5rem", fontWeight: 900, color: "#14532d", lineHeight: 1.2 }}>グラウンド・ゴルフ スコア集計</h1>
+              {/* メニューボタン */}
+              <button onClick={() => setMenuOpen(true)}
+                style={{ position: "absolute", top: 0, right: 0, background: "#374151", color: "white", border: "none", borderRadius: 16, padding: "12px 22px", fontSize: 20, fontWeight: 700, cursor: "pointer", boxShadow: "0 3px 10px rgba(0,0,0,0.2)" }}>
+                ☰ メニュー
+              </button>
+              {/* 保存・読み込みメッセージ */}
+              {savedMsg && (
+                <div style={{ position: "absolute", top: 60, right: 0, background: "#1f2937", color: "white", borderRadius: 12, padding: "10px 16px", fontSize: 16, fontWeight: 700, whiteSpace: "nowrap", boxShadow: "0 2px 8px rgba(0,0,0,0.2)", zIndex: 10 }}>
+                  {savedMsg}
+                </div>
+              )}
+            </div>
+
+            {/* メインメニューモーダル */}
+            {menuOpen && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+                <div style={{ background: "white", borderRadius: 24, padding: "2rem", maxWidth: 400, width: "100%", boxShadow: "0 8px 32px rgba(0,0,0,0.25)" }}>
+                  <h3 style={{ fontSize: 24, fontWeight: 900, textAlign: "center", marginBottom: "1.5rem", color: "#111827" }}>メニュー</h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                    <button onClick={() => { setMenuOpen(false); setResetModal("select"); }}
+                      style={{ background: "#ef4444", color: "white", border: "none", borderRadius: 16, padding: "16px", fontSize: 20, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                      🔄 リセット
+                    </button>
+                    <button onClick={saveMembers}
+                      style={{ background: "#3b82f6", color: "white", border: "none", borderRadius: 16, padding: "16px", fontSize: 20, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                      💾 今回のメンバーを保存
+                    </button>
+                    <button onClick={loadMembers}
+                      style={{ background: "#8b5cf6", color: "white", border: "none", borderRadius: 16, padding: "16px", fontSize: 20, fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
+                      📂 前回のメンバーを読み込む
+                    </button>
+                    <button onClick={() => setMenuOpen(false)}
+                      style={{ background: "#e5e7eb", color: "#374151", border: "none", borderRadius: 16, padding: "12px", fontSize: 18, fontWeight: 700, cursor: "pointer" }}>
+                      閉じる
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* リセットモーダル */}
+            {resetModal && (
+              <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+                <div style={{ background: "white", borderRadius: 24, padding: "2rem", maxWidth: 400, width: "100%", boxShadow: "0 8px 32px rgba(0,0,0,0.25)" }}>
+                  {resetModal === "select" && (<>
+                    <h3 style={{ fontSize: 24, fontWeight: 900, textAlign: "center", marginBottom: "1.5rem", color: "#111827" }}>リセットの種類を選んでください</h3>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                      <button onClick={() => setResetModal("confirm-all")}
+                        style={{ background: "#ef4444", color: "white", border: "none", borderRadius: 16, padding: "16px", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>
+                        🗑️ すべてリセット
+                      </button>
+                      <button onClick={() => setResetModal("confirm-score")}
+                        style={{ background: "#f59e0b", color: "white", border: "none", borderRadius: 16, padding: "16px", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>
+                        📊 スコアのみリセット
+                      </button>
+                      <button onClick={() => setResetModal(null)}
+                        style={{ background: "#e5e7eb", color: "#374151", border: "none", borderRadius: 16, padding: "12px", fontSize: 18, fontWeight: 700, cursor: "pointer" }}>
+                        キャンセル
+                      </button>
+                    </div>
+                  </>)}
+                  {(resetModal === "confirm-all" || resetModal === "confirm-score") && (<>
+                    <h3 style={{ fontSize: 22, fontWeight: 900, textAlign: "center", marginBottom: "0.75rem", color: "#111827" }}>本当によろしいですか？</h3>
+                    <p style={{ textAlign: "center", color: "#6b7280", fontSize: 16, marginBottom: "1.5rem" }}>
+                      {resetModal === "confirm-all" ? "すべてのデータが削除されます" : "スコアとホールインワンがリセットされます"}
+                    </p>
+                    <div style={{ display: "flex", gap: "0.75rem" }}>
+                      <button onClick={() => setResetModal("select")}
+                        style={{ flex: 1, background: "#e5e7eb", color: "#374151", border: "none", borderRadius: 16, padding: "14px", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>
+                        いいえ
+                      </button>
+                      <button onClick={resetModal === "confirm-all" ? doResetAll : doResetScore}
+                        style={{ flex: 1, background: "#ef4444", color: "white", border: "none", borderRadius: 16, padding: "14px", fontSize: 20, fontWeight: 700, cursor: "pointer" }}>
+                        はい
+                      </button>
+                    </div>
+                  </>)}
+                </div>
+              </div>
+            )}
+
+            {/* 大会情報：タブレット/PC では横長1行、スマホでは縦積み */}
+            <section className="bg-white rounded-3xl shadow-lg p-5 mb-6 border border-green-100" style={{ overflow: "hidden" }}>
+              <h2 className="text-2xl font-bold text-green-800 mb-4 flex items-center gap-2">
+                <span className="text-3xl">📅</span> 大会情報
+              </h2>
+              <div className="taikan-row">
+                <style>{`
+                  .taikan-row { display: flex; flex-direction: column; gap: 1rem; }
+                  @media (min-width: 640px) {
+                    .taikan-row { flex-direction: row; align-items: flex-end; gap: 1.5rem; }
+                    .taikan-date { flex: 0 0 220px; }
+                    .taikan-name { flex: 1; }
+                  }
+                `}</style>
+                <div className="taikan-date">
+                  <label className="block text-xl font-semibold text-gray-700 mb-2">日付</label>
+                  <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inp} style={{ borderColor: "#4ade80", boxSizing: "border-box", width: "100%", maxWidth: "100%", minWidth: 0, WebkitAppearance: "none" }} />
+                </div>
+                <div className="taikan-name">
+                  <label className="block text-xl font-semibold text-gray-700 mb-2">大会名</label>
+                  <DictInput value={tournamentName} onChange={setTournamentName}
+                    dictionary={[]} placeholder="大会名を入力（例：春季大会）" inputClassName={inp} />
+                </div>
+              </div>
+            </section>
+
+              {/* 選手登録 */}
+              <section className="bg-white rounded-3xl shadow-lg p-6 mb-6 border border-green-100">
+                <div className="flex items-center justify-between mb-5">
+                  {!gameStarted && (
+                    <h2 className="text-2xl font-bold text-green-800 flex items-center gap-2">
+                      <span className="text-3xl">👤</span> 選手登録
+                    </h2>
+                  )}
+                  {gameStarted && (
+                    <h2 className="text-2xl font-bold text-green-800 flex items-center gap-2">
+                      <span className="text-3xl">👤</span> 選手一覧
+                    </h2>
+                  )}
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    {gameStarted && (
+                      <button
+                        onClick={() => setGameStarted(false)}
+                        className="flex items-center gap-2 text-white text-lg font-bold px-4 py-2 rounded-2xl transition-all shadow-md"
+                        style={{ background: "#6b7280" }}
+                      >
+                        ← 戻る
+                      </button>
+                    )}
+                    {!gameStarted && (
+                      <button
+                        onClick={doGrouping}
+                        disabled={players.length < 2}
+                        className="flex items-center gap-2 text-white text-lg font-bold px-4 py-2 rounded-2xl transition-all shadow-md"
+                        style={{ background: players.length < 2 ? "#d1d5db" : "#6366f1" }}
+                      >
+                        <span className="text-xl">🎲</span> 自動グループ分け
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {!gameStarted && (
+                  <div className="mb-2">
+                    <label className="block text-xl font-semibold text-gray-700 mb-2">名前</label>
+                    <div className="flex gap-3">
+                      <DictInput value={newName} onChange={setNewName} dictionary={[]}
+                        placeholder="名前を入力" inputClassName={inp}
+                        inputRef={nameInputRef} />
+                      <button onClick={addPlayer}
+                        className="bg-green-600 hover:bg-green-700 text-white text-xl font-bold px-5 py-3 rounded-2xl whitespace-nowrap transition-all shadow-md">
+                        ＋ 追加
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {!gameStarted && players.length > 0 && (
+                  <p className="text-lg text-gray-500 mb-4 text-right">登録済み：{players.length}名</p>
+                )}
+
+                {players.length === 0 ? (
+                  <div className="text-center py-10 text-gray-400 text-xl bg-gray-50 rounded-2xl mt-4">
+                    上の入力欄から選手を追加してください
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "1rem" }}>
+                    {(() => {
+                      // グループがある場合はグループ別に行を作る、ない場合は全員を6人ずつ
+                      const COLS = 3; // 1行あたりのセル数（固定）
+                      const padRow = (arr) => {
+                        const padded = [...arr];
+                        while (padded.length < COLS) padded.push(null); // nullは空欄
+                        return padded;
+                      };
+                      const rows = [];
+                      if (groups) {
+                        groups.forEach((group, gi) => {
+                          const color = GROUP_COLORS[gi % GROUP_COLORS.length];
+                          const label = String.fromCharCode(65 + gi);
+                          for (let i = 0; i < group.length; i += COLS) {
+                            rows.push({ badge: i === 0 ? { label, color } : null, players: padRow(group.slice(i, i + COLS)), color });
+                          }
+                        });
+                      } else {
+                        for (let i = 0; i < players.length; i += COLS) {
+                          rows.push({ badge: null, players: padRow(players.slice(i, i + COLS)), color: null });
+                        }
+                      }
+                      return rows.map((row, ri) => (
+                        <div key={ri} style={{ display: "flex", alignItems: "stretch", gap: "0.5rem", background: row.color ? row.color.bg : "#f0fdf4", borderRadius: 16, padding: "0.5rem", border: `2px solid ${row.color ? row.color.border : "#bbf7d0"}` }}>
+                          {/* グループバッジ */}
+                          {row.badge ? (
+                            <span style={{ backgroundColor: row.badge.color.badge, width: 44, minWidth: 44, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+                              className="text-white text-xl font-black shadow-sm">
+                              {row.badge.label}
+                            </span>
+                          ) : (
+                            <span style={{ width: 44, minWidth: 44, flexShrink: 0 }} />
+                          )}
+                          {/* 選手チップ × 3列固定 */}
+                          {row.players.map((p, pi) => {
+                            if (!p) {
+                              // 空欄セル
+                              return <div key={`empty-${pi}`} style={{ flex: "1 1 0", minWidth: 0, background: "white", borderRadius: 12, border: "2px solid transparent", opacity: 0 }} />;
+                            }
+                            // 最新のスコア・HIOをplayersステートから取得
+                            const cur = players.find(pl => pl.id === p.id) || p;
+                            const idx = players.findIndex(pl => pl.id === p.id);
+                            const gc = row.color;
+                            return (
+                              <div key={cur.id} onMouseDown={e => { if (e.target.tagName !== "BUTTON") e.preventDefault(); }} style={{ flex: "1 1 0", minWidth: 0, background: "white", borderRadius: 12, border: `2px solid ${gc ? gc.border : "#4ade80"}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                                {/* 名前＋削除 */}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 8px 6px" }}>
+                                  <span style={{ fontSize: 18, fontWeight: 900, color: gc ? gc.text : "#14532d", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, userSelect: "none", WebkitUserSelect: "none", pointerEvents: "none" }}>
+                                    {cur.name}
+                                  </span>
+                                  <button onClick={() => removePlayer(cur.id)}
+                                    style={{ fontSize: 14, color: "#f87171", background: "none", border: "none", cursor: "pointer", flexShrink: 0, padding: "0 4px", fontWeight: 700 }}>✕</button>
+                                </div>
+                                {/* 試合開始後のみ：スコア・ホールインワン */}
+                                {gameStarted && (<>
+                                  <button onClick={() => openCalc(idx >= 0 ? idx : pi)}
+                                    style={{ background: "#f0fdf4", border: "none", borderTop: "1px solid #d1fae5", cursor: "pointer", padding: "8px 0", textAlign: "center" }}>
+                                    {cur.score ? (
+                                      <span style={{ fontSize: 22, fontWeight: 900, color: "#15803d" }}>{cur.score}打</span>
+                                    ) : (
+                                      <span style={{ fontSize: 13, color: "#9ca3af" }}>スコア入力</span>
+                                    )}
+                                  </button>
+                                  <div style={{ display: "flex", alignItems: "center", borderTop: "1px solid #d1fae5" }}>
+                                    <button onClick={() => updateHio(cur.id, -1)}
+                                      style={{ flex: 1, fontSize: 22, fontWeight: 900, color: "#6b7280", background: "none", border: "none", cursor: "pointer", padding: "6px 0" }}>−</button>
+                                    <span style={{ fontSize: 22, fontWeight: 900, color: "#15803d", minWidth: 0, textAlign: "center" }}>
+                                      {cur.hio}
+                                    </span>
+                                    <button onClick={() => updateHio(cur.id, +1)}
+                                      style={{ flex: 1, fontSize: 22, fontWeight: 900, color: "#6b7280", background: "none", border: "none", cursor: "pointer", padding: "6px 0" }}>＋</button>
+                                  </div>
+                                </>)}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+              </section>
+
+            {/* グループ分け結果（試合開始後は非表示） */}
+            {groups && !gameStarted && (
+              <section ref={groupsRef} className="bg-white rounded-3xl shadow-lg p-6 mb-6" style={{ border: "2px solid #c7d2fe" }}>
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-2xl font-bold flex items-center gap-2" style={{ color: "#4338ca" }}>
+                    <span className="text-3xl">🎲</span> グループ分け結果
+                  </h2>
+                  <button onClick={doGrouping}
+                    className="flex items-center gap-1 text-lg font-bold px-4 py-2 rounded-2xl transition-all"
+                    style={{ background: "#e0e7ff", color: "#4338ca" }}>
+                    🔀 再シャッフル
+                  </button>
+                </div>
+                <p className="text-gray-500 text-lg mb-4 text-center">
+                  {players.length}名 → {groups.length}グループ（{[...new Set(groups.map((g) => g.length))].sort().join("・")}人組）
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  {groups.map((group, gi) => {
+                    const color = GROUP_COLORS[gi % GROUP_COLORS.length];
+                    const label = String.fromCharCode(65 + gi);
+                    // 6人ごとに行を分割
+                    const rows = [];
+                    for (let i = 0; i < group.length; i += 6) {
+                      rows.push(group.slice(i, i + 6));
+                    }
+                    return (
+                      <div key={gi} style={{ borderColor: color.border, backgroundColor: color.bg, borderWidth: 2, borderStyle: "solid" }} className="rounded-2xl px-4 py-3">
+                        {rows.map((row, ri) => (
+                          <div key={ri} style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "nowrap", marginBottom: ri < rows.length - 1 ? "0.5rem" : 0 }}>
+                            {/* グループバッジは最初の行のみ */}
+                            {ri === 0 ? (
+                              <span style={{ backgroundColor: color.badge, width: 44, height: 44, flexShrink: 0 }}
+                                className="text-white text-xl font-black rounded-2xl flex items-center justify-center shadow-md">
+                                {label}
+                              </span>
+                            ) : (
+                              <span style={{ width: 44, flexShrink: 0 }} />
+                            )}
+                            {row.map((p) => (
+                              <input
+                                key={p.id}
+                                defaultValue={p.name}
+                                onBlur={(e) => {
+                                  const newName = e.target.value.trim();
+                                  if (!newName || newName === p.name) { e.target.value = p.name; return; }
+                                  setPlayers((prev) => prev.map((pl) => pl.id === p.id ? { ...pl, name: newName } : pl));
+                                  setGroups((prev) => prev.map((gr) => gr.map((pl) => pl.id === p.id ? { ...pl, name: newName } : pl)));
+                                }}
+                                style={{ borderColor: color.border, color: color.text, backgroundColor: "white", borderWidth: 2, borderStyle: "solid", flex: "1 1 0", textAlign: "center", minWidth: 0, borderRadius: 12, padding: "6px 4px", fontSize: "1.125rem", fontWeight: 700, outline: "none", cursor: "text" }}
+                              />
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
+
+            {/* グループ分け後：試合開始 → 試合開始後：順位を発表する */}
+            {groups && !gameStarted && (
+              <div className="mb-6 max-w-3xl mx-auto">
+                <button onClick={() => setGameStarted(true)}
+                  className="w-full text-white text-3xl font-black py-7 rounded-3xl shadow-2xl transition-all"
+                  style={{ background: "linear-gradient(to right, #16a34a, #15803d)", border: "4px solid #4ade80", letterSpacing: "0.05em" }}>
+                  🏌️　試合開始　🏌️
+                </button>
+              </div>
+            )}
+            {gameStarted && (
+              <div className="mb-6 max-w-3xl mx-auto">
+                <button onClick={announce}
+                  className="w-full text-white text-3xl font-black py-7 rounded-3xl shadow-2xl transition-all"
+                  style={{ background: "linear-gradient(to right, #fbbf24, #d97706)", border: "4px solid #fcd34d", letterSpacing: "0.05em" }}>
+                  🏆　順位を発表する　🏆
+                </button>
+              </div>
+            )}
+
+            {/* 順位表示 */}
+            {rankings && (
+              <section id="ranking-print-area" ref={rankingRef} className="bg-white rounded-3xl shadow-2xl p-6 mb-6 max-w-3xl mx-auto" style={{ border: "4px solid #fbbf24" }}>
+                <div className="text-center mb-6">
+                  <div style={{ fontSize: 64 }} className="mb-2">🏆</div>
+                  <h2 className="text-4xl font-black" style={{ color: "#d97706" }}>順位発表！</h2>
+                  {tournamentName && <p className="text-2xl font-bold text-gray-800 mt-2">{tournamentName}</p>}
+                  {date && <p className="text-xl text-gray-500 mt-1">{date}</p>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  {rankings.map((p, i) => {
+                    const crown = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+                    const bg = i === 0 ? "#fefce8" : i === 1 ? "#f9fafb" : i === 2 ? "#fff7ed" : "#ffffff";
+                    const border = i === 0 ? "#fde68a" : i === 1 ? "#d1d5db" : i === 2 ? "#fed7aa" : "#f3f4f6";
+                    const rankColor = i === 0 ? "#eab308" : i === 1 ? "#9ca3af" : i === 2 ? "#b45309" : "#9ca3af";
+                    return (
+                      <div key={p.id} className="flex items-center gap-3 rounded-2xl px-5 py-4"
+                        style={{ background: bg, border: `2px solid ${border}` }}>
+                        <span className="text-3xl font-black w-10 text-center flex-shrink-0" style={{ color: rankColor }}>{i + 1}</span>
+                        {crown ? <span style={{ fontSize: 36 }} className="flex-shrink-0">{crown}</span> : <span style={{ width: 40 }} className="flex-shrink-0" />}
+                        <div className="flex-1" style={{ minWidth: 0 }}>
+                          <div className="text-2xl font-black text-gray-900" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                          {p.hio > 0 && <div className="text-lg font-semibold mt-1" style={{ color: "#3b82f6" }}>🌟 ホールインワン {p.hio}回</div>}
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <span className="text-3xl font-black" style={{ color: "#15803d" }}>{p.score}</span>
+                          <span className="text-xl text-gray-500 ml-1">打</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* ホールインワン順位 */}
+                {(() => {
+                  const hioRanking = [...rankings].filter(p => p.hio > 0).sort((a, b) => b.hio - a.hio);
+                  if (hioRanking.length === 0) return null;
+                  return (
+                    <div style={{ marginTop: "2rem" }}>
+                      <h3 className="text-2xl font-black text-center mb-4" style={{ color: "#2563eb" }}>🌟 ホールインワン 順位</h3>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                        {hioRanking.map((p, i) => {
+                          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+                          return (
+                            <div key={p.id} className="flex items-center gap-3 rounded-2xl px-5 py-3"
+                              style={{ background: "#eff6ff", border: "2px solid #bfdbfe" }}>
+                              <span className="text-2xl font-black w-10 text-center flex-shrink-0" style={{ color: "#3b82f6" }}>{i + 1}</span>
+                              {medal ? <span style={{ fontSize: 32 }} className="flex-shrink-0">{medal}</span> : <span style={{ width: 36 }} className="flex-shrink-0" />}
+                              <div className="flex-1 text-2xl font-black text-gray-900" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                              <div className="text-right flex-shrink-0">
+                                <span className="text-3xl font-black" style={{ color: "#2563eb" }}>{p.hio}</span>
+                                <span className="text-xl text-gray-500 ml-1">回</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 保存ボタン群 */}
+                <div className="no-print" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.75rem", marginTop: "1.5rem" }}>
+                  <button onClick={() => window.print()}
+                    style={{ background: "#3b82f6", color: "white", border: "none", borderRadius: 16, padding: "14px 8px", fontSize: 17, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}>
+                    🖨️ 印刷する
+                  </button>
+                  <button onClick={downloadCSV}
+                    style={{ background: "#16a34a", color: "white", border: "none", borderRadius: 16, padding: "14px 8px", fontSize: 17, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.12)" }}>
+                    📊 CSV保存
+                  </button>
+                  <button onClick={copyText}
+                    style={{ background: copied ? "#6366f1" : "#8b5cf6", color: "white", border: "none", borderRadius: 16, padding: "14px 8px", fontSize: 17, fontWeight: 700, cursor: "pointer", boxShadow: "0 2px 8px rgba(0,0,0,0.12)", transition: "background 0.2s" }}>
+                    {copied ? "✅ コピー済" : "📋 テキストコピー"}
+                  </button>
+                </div>
+              </section>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<GroundGolfApp />);
+  </script>
+</body>
+</html>
